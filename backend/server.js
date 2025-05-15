@@ -1,15 +1,19 @@
 // File: backend/server.js
 
 require('dotenv').config();
+
+const ffmpegPath = require('ffmpeg-static');
+const ffprobePath = require('ffprobe-static').path;
+const ffmpeg = require('fluent-ffmpeg');
+
+ffmpeg.setFfmpegPath(ffmpegPath);
+ffmpeg.setFfprobePath(ffprobePath);
+
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
-const ffmpeg = require('fluent-ffmpeg');
-const ffmpegPath = require('ffmpeg-static');
 const path = require('path');
 const fs = require('fs');
-
-ffmpeg.setFfmpegPath(ffmpegPath);
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -30,12 +34,17 @@ const upload = multer({ storage });
 app.use(cors());
 app.use('/shorts', express.static(path.join(__dirname, 'shorts')));
 
-// Health check
+// Health check route
 app.get('/', (req, res) => {
   res.send('🎬 Video Splitter Backend is up and running!');
 });
 
-// POST /upload → split into 60s chunks
+// Test route for quick API check
+app.get('/api/pong', (req, res) => {
+  res.json({ pong: true });
+});
+
+// POST /upload → split uploaded video into multiple 45-60s chunks
 app.post('/upload', upload.single('video'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
 
@@ -44,7 +53,10 @@ app.post('/upload', upload.single('video'), (req, res) => {
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir);
 
   ffmpeg.ffprobe(inputPath, (err, metadata) => {
-    if (err) return res.status(500).json({ error: 'Error reading video.' });
+    if (err) {
+      console.error('Error reading video metadata:', err);
+      return res.status(500).json({ error: 'Error reading video metadata' });
+    }
 
     const totalSec = metadata.format.duration;
     const chunkSec = parseInt(process.env.CHUNK_SECONDS) || 60;
@@ -54,7 +66,7 @@ app.post('/upload', upload.single('video'), (req, res) => {
 
     for (let i = 0; i < count; i++) {
       const start = i * chunkSec;
-      const name = `short-${i+1}-${Date.now()}.mp4`;
+      const name = `short-${i + 1}-${Date.now()}.mp4`;
       const outPath = path.join(outDir, name);
 
       ffmpeg(inputPath)
@@ -65,11 +77,20 @@ app.post('/upload', upload.single('video'), (req, res) => {
           urls.push(`${req.protocol}://${req.get('host')}/shorts/${name}`);
           completed++;
           if (completed === count) {
-            fs.unlinkSync(inputPath);
+            try {
+              fs.unlinkSync(inputPath);
+            } catch (unlinkErr) {
+              console.error('Failed to delete uploaded file:', unlinkErr);
+            }
             res.json({ shorts: urls });
           }
         })
-        .on('error', (e) => console.error('FFmpeg chunk error:', e))
+        .on('error', (e) => {
+          console.error('FFmpeg processing error:', e);
+          if (!res.headersSent) {
+            res.status(500).json({ error: 'Video processing failed' });
+          }
+        })
         .run();
     }
   });
