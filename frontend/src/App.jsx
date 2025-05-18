@@ -48,7 +48,7 @@ export default function App() {
       formData.append('duration', duration);
 
       // Change this URL to your deployed backend URL or localhost for testing
-      const res = await axios.post('http://localhost:5000/upload', formData, {
+      const res = await axios.post('https://video-splitter-9ptz.onrender.com/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
 
