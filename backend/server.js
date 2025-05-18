@@ -58,7 +58,12 @@ const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 } // 100 MB max size limit
 });
 
-app.use(cors());
+app.use(cors({
+  origin: [
+    'http://localhost:5173', // for local development
+    'https://video-splitter-zeta.vercel.app/' // replace this with your actual deployed Vercel URL
+  ]
+}));
 app.use(express.json());
 app.use('/shorts', express.static(path.join(__dirname, 'shorts')));
 
@@ -135,5 +140,5 @@ app.post('/upload', upload.single('video'), (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Backend running on http://localhost:${PORT}`);
+  console.log(` Backend running on http://localhost:${PORT}`);
 });
