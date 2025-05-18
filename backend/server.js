@@ -1,5 +1,3 @@
-// File: backend/server.js
-
 require('dotenv').config();
 
 const ffmpegPath = require('ffmpeg-static');
@@ -18,81 +16,50 @@ const fs = require('fs');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Helper: Delete oldest files if shorts folder has more than maxFiles shorts
-function cleanOldShortsFolder(folderPath, maxFiles = 50) {
-  if (!fs.existsSync(folderPath)) return;
+const UPLOAD_DIR = path.join(__dirname, 'uploads');
+const SHORTS_DIR = path.join(__dirname, 'shorts');
 
-  const files = fs.readdirSync(folderPath)
-    .map(file => ({
-      name: file,
-      time: fs.statSync(path.join(folderPath, file)).mtime.getTime()
-    }))
-    .sort((a, b) => a.time - b.time); // Oldest first
+// Ensure directories exist
+if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR);
+if (!fs.existsSync(SHORTS_DIR)) fs.mkdirSync(SHORTS_DIR);
 
-  if (files.length <= maxFiles) return; // Nothing to delete
-
-  const filesToDelete = files.slice(0, files.length - maxFiles);
-  for (const file of filesToDelete) {
-    try {
-      fs.unlinkSync(path.join(folderPath, file.name));
-      console.log(`Deleted old short: ${file.name}`);
-    } catch (err) {
-      console.error(`Error deleting file ${file.name}:`, err);
-    }
-  }
-}
-
-// Configure Multer to save uploads in /uploads
+// Configure Multer for 80MB max file size
 const storage = multer.diskStorage({
-  destination: (_, __, cb) => {
-    const dir = path.join(__dirname, 'uploads');
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir);
-    cb(null, dir);
-  },
-  filename: (_, file, cb) => {
-    cb(null, Date.now() + '-' + file.originalname);
-  }
+  destination: (_, __, cb) => cb(null, UPLOAD_DIR),
+  filename: (_, file, cb) => cb(null, Date.now() + '-' + file.originalname),
 });
-const upload = multer({
-  storage,
-  limits: { fileSize: 100 * 1024 * 1024 } // 100 MB max size limit
-});
+const upload = multer({ storage, limits: { fileSize: 80 * 1024 * 1024 } });
 
 app.use(cors({
-  origin: [
-    'http://localhost:5173',
-    'https://video-splitter-zeta.vercel.app',
-    'https://video-splitter-git-main-mantranshs-projects.vercel.app',
-    'https://video-splitter-ix5dd5yfj-mantranshs-projects.vercel.app'
-  ],
-  credentials: true,
+  origin: ['http://localhost:5173', 'https://your-frontend.vercel.app'],
 }));
 app.use(express.json());
-app.use('/shorts', express.static(path.join(__dirname, 'shorts')));
+app.use('/shorts', express.static(SHORTS_DIR));
 
 // Health check route
 app.get('/', (req, res) => {
   res.send('🎬 Video Splitter Backend is up and running!');
 });
 
-// Test route for quick API check
-app.get('/api/pong', (req, res) => {
-  res.json({ pong: true });
-});
-
-// POST /upload → split uploaded video into multiple chunks of user-defined duration
+// Upload and split video
 app.post('/upload', upload.single('video'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
 
   const inputPath = req.file.path;
-  const outDir = path.join(__dirname, 'shorts');
-  if (!fs.existsSync(outDir)) fs.mkdirSync(outDir);
 
-  // Read duration from request body (sent from frontend)
-  // Default to 60 seconds if not provided or invalid
+  // 🔥 Clear all existing shorts before creating new ones
+  fs.readdir(SHORTS_DIR, (err, files) => {
+    if (!err) {
+      files.forEach(file => {
+        fs.unlink(path.join(SHORTS_DIR, file), () => {});
+      });
+    }
+  });
+
+  // Duration from request (default: 45 seconds)
   let chunkSec = parseInt(req.body.duration, 10);
-  if (isNaN(chunkSec) || chunkSec <= 0) {
-    chunkSec = 60;
+  if (isNaN(chunkSec) || chunkSec <= 0 || chunkSec > 60) {
+    chunkSec = 45;
   }
 
   ffmpeg.ffprobe(inputPath, (err, metadata) => {
@@ -109,7 +76,7 @@ app.post('/upload', upload.single('video'), (req, res) => {
     for (let i = 0; i < count; i++) {
       const start = i * chunkSec;
       const name = `short-${i + 1}-${Date.now()}.mp4`;
-      const outPath = path.join(outDir, name);
+      const outPath = path.join(SHORTS_DIR, name);
 
       ffmpeg(inputPath)
         .setStartTime(start)
@@ -120,14 +87,10 @@ app.post('/upload', upload.single('video'), (req, res) => {
           completed++;
           if (completed === count) {
             try {
-              fs.unlinkSync(inputPath);
+              fs.unlinkSync(inputPath); // delete uploaded file
             } catch (unlinkErr) {
               console.error('Failed to delete uploaded file:', unlinkErr);
             }
-
-            // Clean shorts folder after processing new shorts
-            cleanOldShortsFolder(outDir, 50);
-
             res.json({ shorts: urls });
           }
         })
