@@ -18,6 +18,30 @@ const fs = require('fs');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Helper: Delete oldest files if shorts folder has more than maxFiles shorts
+function cleanOldShortsFolder(folderPath, maxFiles = 50) {
+  if (!fs.existsSync(folderPath)) return;
+
+  const files = fs.readdirSync(folderPath)
+    .map(file => ({
+      name: file,
+      time: fs.statSync(path.join(folderPath, file)).mtime.getTime()
+    }))
+    .sort((a, b) => a.time - b.time); // Oldest first
+
+  if (files.length <= maxFiles) return; // Nothing to delete
+
+  const filesToDelete = files.slice(0, files.length - maxFiles);
+  for (const file of filesToDelete) {
+    try {
+      fs.unlinkSync(path.join(folderPath, file.name));
+      console.log(`Deleted old short: ${file.name}`);
+    } catch (err) {
+      console.error(`Error deleting file ${file.name}:`, err);
+    }
+  }
+}
+
 // Configure Multer to save uploads in /uploads
 const storage = multer.diskStorage({
   destination: (_, __, cb) => {
@@ -29,9 +53,13 @@ const storage = multer.diskStorage({
     cb(null, Date.now() + '-' + file.originalname);
   }
 });
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: { fileSize: 100 * 1024 * 1024 } // 100 MB max size limit
+});
 
 app.use(cors());
+app.use(express.json());
 app.use('/shorts', express.static(path.join(__dirname, 'shorts')));
 
 // Health check route
@@ -44,13 +72,20 @@ app.get('/api/pong', (req, res) => {
   res.json({ pong: true });
 });
 
-// POST /upload → split uploaded video into multiple 45-60s chunks
+// POST /upload → split uploaded video into multiple chunks of user-defined duration
 app.post('/upload', upload.single('video'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
 
   const inputPath = req.file.path;
   const outDir = path.join(__dirname, 'shorts');
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir);
+
+  // Read duration from request body (sent from frontend)
+  // Default to 60 seconds if not provided or invalid
+  let chunkSec = parseInt(req.body.duration, 10);
+  if (isNaN(chunkSec) || chunkSec <= 0) {
+    chunkSec = 60;
+  }
 
   ffmpeg.ffprobe(inputPath, (err, metadata) => {
     if (err) {
@@ -59,7 +94,6 @@ app.post('/upload', upload.single('video'), (req, res) => {
     }
 
     const totalSec = metadata.format.duration;
-    const chunkSec = parseInt(process.env.CHUNK_SECONDS) || 60;
     const count = Math.ceil(totalSec / chunkSec);
     const urls = [];
     let completed = 0;
@@ -82,6 +116,10 @@ app.post('/upload', upload.single('video'), (req, res) => {
             } catch (unlinkErr) {
               console.error('Failed to delete uploaded file:', unlinkErr);
             }
+
+            // Clean shorts folder after processing new shorts
+            cleanOldShortsFolder(outDir, 50);
+
             res.json({ shorts: urls });
           }
         })
