@@ -60,9 +60,12 @@ const upload = multer({
 
 app.use(cors({
   origin: [
-    'http://localhost:5173', // for local development
-    'https://video-splitter-zeta.vercel.app/' // replace this with your actual deployed Vercel URL
-  ]
+    'http://localhost:5173',
+    'https://video-splitter-zeta.vercel.app',
+    'https://video-splitter-git-main-mantranshs-projects.vercel.app',
+    'https://video-splitter-ix5dd5yfj-mantranshs-projects.vercel.app'
+  ],
+  credentials: true,
 }));
 app.use(express.json());
 app.use('/shorts', express.static(path.join(__dirname, 'shorts')));
