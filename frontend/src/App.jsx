@@ -48,7 +48,7 @@ export default function App() {
       formData.append('duration', duration);
 
       // Change this URL to your deployed backend URL or localhost for testing
-      const res = await axios.post('https://video-splitter-9ptz.onrender.com/upload', formData, {
+      const res = await axios.post(`${import.meta.env.VITE_API_URL}/upload`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
 
