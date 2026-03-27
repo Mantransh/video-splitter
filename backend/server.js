@@ -55,8 +55,6 @@ app.get('/', (_, res) => {
 // 🎬 Upload & Split
 app.post('/upload', upload.single('video'), async (req, res) => {
   try {
-    res.setTimeout(0); // prevent timeout
-
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
@@ -68,64 +66,51 @@ app.post('/upload', upload.single('video'), async (req, res) => {
       chunkSec = 45;
     }
 
-    console.log('📂 Uploaded:', inputPath);
-
-    ffmpeg.ffprobe(inputPath, async (err, metadata) => {
+    ffmpeg.ffprobe(inputPath, (err, metadata) => {
       if (err) {
-        console.error('❌ FFprobe error:', err);
-        return res.status(500).json({ error: 'Metadata read failed' });
+        return res.status(500).json({ error: 'Metadata error' });
       }
 
       const totalSec = metadata.format.duration;
       const count = Math.ceil(totalSec / chunkSec);
 
-      console.log(`🎞 Duration: ${totalSec}s | Parts: ${count}`);
+      const urls = [];
 
-      const tasks = [];
+      let i = 0;
 
-      for (let i = 0; i < count; i++) {
+      const processNext = () => {
+        if (i >= count) {
+          return res.json({ shorts: urls });
+        }
+
         const start = i * chunkSec;
         const fileName = `short-${Date.now()}-${i}.mp4`;
         const outputPath = path.join(SHORTS_DIR, fileName);
 
-        const task = new Promise((resolve, reject) => {
-          ffmpeg(inputPath)
-            .setStartTime(start)
-            .setDuration(chunkSec)
-            .output(outputPath)
-            .on('end', () => {
-              console.log(`✅ Created: ${fileName}`);
-              resolve(`${req.protocol}://${req.get('host')}/shorts/${fileName}`);
-            })
-            .on('error', (err) => {
-              console.error('❌ FFmpeg error:', err);
-              reject(err);
-            })
-            .run();
-        });
+        ffmpeg(inputPath)
+          .setStartTime(start)
+          .setDuration(chunkSec)
+          .output(outputPath)
+          .on('end', () => {
+            urls.push(`${req.protocol}://${req.get('host')}/shorts/${fileName}`);
+            i++;
+            processNext(); // 🔥 sequential processing
+          })
+          .on('error', (err) => {
+            console.error(err);
+            return res.status(500).json({ error: 'Processing failed' });
+          })
+          .run();
+      };
 
-        tasks.push(task);
-      }
-
-      try {
-        const urls = await Promise.all(tasks);
-
-        // Cleanup uploaded file
-        fs.unlink(inputPath, () => {});
-
-        return res.json({ shorts: urls });
-      } catch (err) {
-        console.error('❌ Processing failed:', err);
-        return res.status(500).json({ error: 'Video processing failed' });
-      }
+      processNext(); // start
     });
 
   } catch (err) {
-    console.error('❌ Server error:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
-
 // 🚀 Start server
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
