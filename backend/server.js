@@ -35,7 +35,11 @@ const upload = multer({
 });
 
 // 🌐 Middleware
-app.use(cors()); // allow all for now
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST"],
+  allowedHeaders: ["Content-Type"]
+}));  // allow all for now
 app.use(express.json());
 app.use('/shorts', express.static(SHORTS_DIR));
 
