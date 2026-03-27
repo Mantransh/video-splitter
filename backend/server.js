@@ -42,9 +42,7 @@ app.use((req, res, next) => {
 });
 
 // Handle preflight
-app.options('*', (req, res) => {
-  res.sendStatus(200);
-});
+
 
 app.use(express.json());
 app.use('/shorts', express.static(SHORTS_DIR));
