@@ -8,7 +8,6 @@ ffmpeg.setFfmpegPath(ffmpegPath);
 ffmpeg.setFfprobePath(ffprobePath);
 
 const express = require('express');
-const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -34,12 +33,19 @@ const upload = multer({
   limits: { fileSize: 80 * 1024 * 1024 }, // 80MB
 });
 
-// 🌐 Middleware
-app.use(cors({
-  origin: "*",
-  methods: ["GET", "POST"],
-  allowedHeaders: ["Content-Type"]
-}));  // allow all for now
+// 🌐 FORCE CORS FIX (important)
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type");
+  next();
+});
+
+// Handle preflight
+app.options('*', (req, res) => {
+  res.sendStatus(200);
+});
+
 app.use(express.json());
 app.use('/shorts', express.static(SHORTS_DIR));
 
@@ -51,22 +57,21 @@ app.get('/', (_, res) => {
 // 🎬 Upload & Split
 app.post('/upload', upload.single('video'), async (req, res) => {
   try {
+    res.setTimeout(0); // prevent timeout
+
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
     const inputPath = req.file.path;
 
-    // 🎯 Duration logic
     let chunkSec = parseInt(req.body.duration, 10);
     if (isNaN(chunkSec) || chunkSec <= 0 || chunkSec > 60) {
       chunkSec = 45;
     }
 
     console.log('📂 Uploaded:', inputPath);
-    console.log('⏱ Duration:', chunkSec);
 
-    // 🔍 Get video metadata
     ffmpeg.ffprobe(inputPath, async (err, metadata) => {
       if (err) {
         console.error('❌ FFprobe error:', err);
@@ -76,7 +81,7 @@ app.post('/upload', upload.single('video'), async (req, res) => {
       const totalSec = metadata.format.duration;
       const count = Math.ceil(totalSec / chunkSec);
 
-      console.log(`🎞 Total Duration: ${totalSec}s | Parts: ${count}`);
+      console.log(`🎞 Duration: ${totalSec}s | Parts: ${count}`);
 
       const tasks = [];
 
@@ -92,10 +97,7 @@ app.post('/upload', upload.single('video'), async (req, res) => {
             .output(outputPath)
             .on('end', () => {
               console.log(`✅ Created: ${fileName}`);
-
-              resolve(
-                `${req.protocol}://${req.get('host')}/shorts/${fileName}`
-              );
+              resolve(`${req.protocol}://${req.get('host')}/shorts/${fileName}`);
             })
             .on('error', (err) => {
               console.error('❌ FFmpeg error:', err);
@@ -110,13 +112,12 @@ app.post('/upload', upload.single('video'), async (req, res) => {
       try {
         const urls = await Promise.all(tasks);
 
-        // 🧹 Cleanup uploaded file
-        fs.unlink(inputPath, (err) => {
-          if (err) console.error('Cleanup error:', err);
-        });
+        // Cleanup uploaded file
+        fs.unlink(inputPath, () => {});
 
         return res.json({ shorts: urls });
       } catch (err) {
+        console.error('❌ Processing failed:', err);
         return res.status(500).json({ error: 'Video processing failed' });
       }
     });
