@@ -22,17 +22,10 @@ const allowedOrigins = [
 
 app.use(
   cors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (Postman, curl, etc.)
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error(`CORS blocked: ${origin}`));
-      }
-    },
+    origin: "https://video-splitter-zeta.vercel.app",
+    methods: ["GET", "POST"],
   })
 );
-
 app.use(express.json());
 
 // ─── Folders ─────────────────────────────────────────────────────────────────
