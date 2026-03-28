@@ -22,7 +22,7 @@ const SHORTS_DIR = path.join(__dirname, 'shorts');
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR);
 if (!fs.existsSync(SHORTS_DIR)) fs.mkdirSync(SHORTS_DIR);
 
-// 📦 Multer setup
+// 📦 Multer
 const storage = multer.diskStorage({
   destination: (_, __, cb) => cb(null, UPLOAD_DIR),
   filename: (_, file, cb) => cb(null, Date.now() + '-' + file.originalname),
@@ -49,7 +49,7 @@ app.get('/', (_, res) => {
   res.send('🎬 Video Splitter Backend Running');
 });
 
-// 🎬 Upload & Split (WITH 9:16 + BLACK PADDING)
+// 🎬 Upload + Split + 9:16 FIX
 app.post('/upload', upload.single('video'), async (req, res) => {
   try {
     if (!req.file) {
@@ -64,8 +64,9 @@ app.post('/upload', upload.single('video'), async (req, res) => {
     }
 
     ffmpeg.ffprobe(inputPath, (err, metadata) => {
-      if (err) {
-        return res.status(500).json({ error: 'Metadata error' });
+      if (err || !metadata) {
+        console.error(err);
+        return res.status(500).json({ error: 'Invalid video file' });
       }
 
       const totalSec = metadata.format.duration;
@@ -76,7 +77,6 @@ app.post('/upload', upload.single('video'), async (req, res) => {
 
       const processNext = () => {
         if (i >= count) {
-          // 🧹 delete original upload
           fs.unlink(inputPath, () => {});
           return res.json({ shorts: urls });
         }
@@ -89,10 +89,18 @@ app.post('/upload', upload.single('video'), async (req, res) => {
           .setStartTime(start)
           .setDuration(chunkSec)
 
-          // 🔥 IMPORTANT: 9:16 + BLACK PADDING
+          // 🔥 FIXED: 9:16 + BLACK PADDING
+
           .videoFilters([
-            "scale=1080:1920:force_original_aspect_ratio=decrease",
-            "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black",
+            // 1. Scale up slightly (zoom in)
+            "scale=1080:1920:force_original_aspect_ratio=increase",
+
+            // 2. Crop to maintain center focus
+            "crop=1080:1440",
+
+            // 3. Add black padding (12.5% top & bottom of 1920 = 240px each)
+            "pad=1080:1920:0:240:black",
+
             "setsar=1"
           ])
 
@@ -101,26 +109,33 @@ app.post('/upload', upload.single('video'), async (req, res) => {
           .outputOptions(['-preset', 'fast', '-crf', '23'])
 
           .output(outputPath)
+
+          .on('start', (cmd) => {
+            console.log("FFmpeg:", cmd);
+          })
+
           .on('end', () => {
             const url = `${req.protocol}://${req.get('host')}/shorts/${fileName}`;
             urls.push(url);
 
             console.log(`✅ Created: ${fileName}`);
 
-            // 🧹 Auto delete after 5 minutes
             setTimeout(() => {
-              fs.unlink(outputPath, () => {
-                console.log(`🧹 Deleted: ${fileName}`);
-              });
+              fs.unlink(outputPath, () => {});
             }, 5 * 60 * 1000);
 
             i++;
             processNext();
           })
+
           .on('error', (err) => {
             console.error('❌ FFmpeg error:', err);
-            return res.status(500).json({ error: 'Processing failed' });
+
+            if (!res.headersSent) {
+              return res.status(500).json({ error: 'Processing failed' });
+            }
           })
+
           .run();
       };
 
@@ -133,7 +148,7 @@ app.post('/upload', upload.single('video'), async (req, res) => {
   }
 });
 
-// 🚀 Start server
+// 🚀 Start
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
