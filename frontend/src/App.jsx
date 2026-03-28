@@ -35,24 +35,26 @@ export default function App() {
       formData.append("video", videoFile);
       formData.append("duration", duration);
 
-      const res = await axios.post(
-        `${BACKEND_URL}/upload`,
-        formData,
-        {
+      const res = await axios.post(`${BACKEND_URL}/upload`, formData, {
           onUploadProgress: (e) => {
             const percent = Math.round((e.loaded * 100) / e.total);
             setProgress(percent);
             if (percent === 100) setStatus("Processing...");
           },
-        }
-      );
+        });
 
-      if (Array.isArray(res.data.shorts)) {
-        setShorts(res.data.shorts);
-        setStatus("Done 🎉");
-      } else {
-        setError("Failed to generate shorts");
-      }
+        if (res.data.status === "processing") {
+          setStatus("Processing started... Please wait and refresh.");
+          return;
+        }
+
+        // 👇 OLD LOGIC (keep this for when backend returns shorts)
+        if (Array.isArray(res.data.shorts)) {
+          setShorts(res.data.shorts);
+          setStatus("Done 🎉");
+        } else {
+          setError("Failed to generate shorts");
+        }
     } catch {
       setError("Upload failed");
     } finally {
