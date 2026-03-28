@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback } from "react";
 import axios from "axios";
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:5000";
+const BACKEND_URL = "https://video-splitter-production-b811.up.railway.app";
 const MAX_FILE_MB = 100;
 const POLL_INTERVAL_MS = 4000;
 
