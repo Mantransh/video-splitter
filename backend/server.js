@@ -30,19 +30,16 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 80 * 1024 * 1024 }, // 80MB
+  limits: { fileSize: 80 * 1024 * 1024 },
 });
 
-// 🌐 FORCE CORS FIX (important)
+// 🌐 CORS (safe)
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.header("Access-Control-Allow-Headers", "Content-Type");
   next();
 });
-
-// Handle preflight
-
 
 app.use(express.json());
 app.use('/shorts', express.static(SHORTS_DIR));
@@ -52,7 +49,7 @@ app.get('/', (_, res) => {
   res.send('🎬 Video Splitter Backend Running');
 });
 
-// 🎬 Upload & Split
+// 🎬 Upload & Split (SEQUENTIAL + CLEANUP)
 app.post('/upload', upload.single('video'), async (req, res) => {
   try {
     if (!req.file) {
@@ -75,11 +72,12 @@ app.post('/upload', upload.single('video'), async (req, res) => {
       const count = Math.ceil(totalSec / chunkSec);
 
       const urls = [];
-
       let i = 0;
 
       const processNext = () => {
         if (i >= count) {
+          // 🧹 delete original upload
+          fs.unlink(inputPath, () => {});
           return res.json({ shorts: urls });
         }
 
@@ -92,18 +90,31 @@ app.post('/upload', upload.single('video'), async (req, res) => {
           .setDuration(chunkSec)
           .output(outputPath)
           .on('end', () => {
-            urls.push(`${req.protocol}://${req.get('host')}/shorts/${fileName}`);
+            const url = `${req.protocol}://${req.get('host')}/shorts/${fileName}`;
+            urls.push(url);
+
+            console.log(`✅ Created: ${fileName}`);
+
+            // 🧹 AUTO DELETE after 5 minutes
+            setTimeout(() => {
+              fs.unlink(outputPath, (err) => {
+                if (!err) {
+                  console.log(`🧹 Deleted: ${fileName}`);
+                }
+              });
+            }, 5 * 60 * 1000);
+
             i++;
-            processNext(); // 🔥 sequential processing
+            processNext();
           })
           .on('error', (err) => {
-            console.error(err);
+            console.error('❌ FFmpeg error:', err);
             return res.status(500).json({ error: 'Processing failed' });
           })
           .run();
       };
 
-      processNext(); // start
+      processNext();
     });
 
   } catch (err) {
@@ -111,6 +122,7 @@ app.post('/upload', upload.single('video'), async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
+
 // 🚀 Start server
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
