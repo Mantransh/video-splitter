@@ -4,145 +4,110 @@ const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
 
-// ✅ FIRST: import ffmpeg & path
 const ffmpeg = require("fluent-ffmpeg");
 const ffmpegPath = require("ffmpeg-static");
 
-// ✅ THEN: set ffmpeg path
+// ✅ Set ffmpeg path
 ffmpeg.setFfmpegPath(ffmpegPath);
 
 const app = express();
-
-// ✅ Use Railway port
 const PORT = process.env.PORT || 5000;
 
-// ✅ Middlewares
+// Middlewares
 app.use(cors());
 app.use(express.json());
 
-// ✅ Ensure folders exist
+// Folders
 const uploadDir = path.join(__dirname, "uploads");
 const outputDir = path.join(__dirname, "shorts");
 
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir);
 
-// ============================
-// 🚀 MULTER SETUP
-// ============================
+// Multer
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + "-" + file.originalname);
-  },
+  filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname),
 });
 
 const upload = multer({
   storage,
-  limits: {
-    fileSize: 50 * 1024 * 1024,
-  },
+  limits: { fileSize: 50 * 1024 * 1024 },
 });
 
-// ============================
-// 🚀 HEALTH CHECK
-// ============================
+// Health check
 app.get("/", (req, res) => {
-  res.send("🎬 Video Splitter Backend Running");
+  res.send("🎬 Backend Running");
 });
 
-// ============================
-// 🚀 UPLOAD ROUTE
-// ============================
-app.post("/upload", upload.single("video"), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: "No file uploaded" });
-    }
+// Upload
+app.post("/upload", upload.single("video"), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "No file" });
 
-    const duration = parseInt(req.body.duration) || 30;
-    const inputPath = req.file.path;
+  const inputPath = req.file.path;
+  const duration = parseInt(req.body.duration) || 30;
 
-    console.log("📥 File received:", inputPath);
+  console.log("📥 Uploaded:", inputPath);
 
-    // ✅ background processing
-    setImmediate(() => {
-      processVideo(inputPath, duration);
-    });
+  processVideo(inputPath, duration);
 
-    return res.json({
-      message: "Processing started",
-      status: "processing",
-    });
-
-  } catch (err) {
-    console.error("❌ Upload error:", err);
-    return res.status(500).json({ error: "Upload failed" });
-  }
+  res.json({
+    status: "processing",
+    message: "Processing started",
+  });
 });
 
-// ============================
-// 🚀 VIDEO PROCESSING
-// ============================
+// Fetch processed videos
+app.get("/shorts-list", (req, res) => {
+  const files = fs.readdirSync(outputDir);
+
+  const urls = files.map(file => `/shorts/${file}`);
+
+  res.json({ shorts: urls });
+});
+
+// Video processing
 function processVideo(inputPath, duration) {
   let index = 0;
 
-  const processNext = () => {
+  const run = () => {
     const outputPath = path.join(
       outputDir,
       `short-${Date.now()}-${index}.mp4`
     );
 
-    console.log("🎬 Processing chunk:", index);
+    console.log("🎬 Processing:", index);
 
     ffmpeg(inputPath)
       .setStartTime(index * duration)
       .setDuration(duration)
-
-      // ✅ LIGHTWEIGHT + SAFE 9:16
       .videoFilters([
         "scale=720:1280:force_original_aspect_ratio=increase",
-        "crop=720:1280",
+        "crop=720:1280"
       ])
-
       .videoCodec("libx264")
       .audioCodec("aac")
-      .outputOptions([
-        "-preset ultrafast",
-        "-crf 28"
-      ])
-
+      .outputOptions(["-preset ultrafast", "-crf 28"])
       .on("end", () => {
-        console.log("✅ Chunk done:", index);
+        console.log("✅ Done:", index);
 
         index++;
 
-        if (index < 3) {
-          processNext();
-        } else {
-          console.log("🎉 Processing complete");
-        }
+        if (index < 3) run();
+        else console.log("🎉 Processing complete");
       })
-
-      .on("error", (err) => {
-        console.error("❌ FFmpeg error:", err);
-      })
-
+      .on("error", err => console.error("❌ FFmpeg:", err))
       .save(outputPath);
   };
 
-  processNext();
+  run();
 }
 
-// ============================
-// 🚀 STATIC FILES
-// ============================
+// Static files
 app.use("/shorts", express.static(outputDir));
 app.use("/uploads", express.static(uploadDir));
 
-// ============================
-// 🚀 START SERVER
-// ============================
+// Start
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
