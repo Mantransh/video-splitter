@@ -1,13 +1,15 @@
-const ffmpegPath = require("ffmpeg-static");
-
-ffmpeg.setFfmpegPath(ffmpegPath);
-
 const express = require("express");
 const multer = require("multer");
 const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
+
+// ✅ FIRST: import ffmpeg & path
 const ffmpeg = require("fluent-ffmpeg");
+const ffmpegPath = require("ffmpeg-static");
+
+// ✅ THEN: set ffmpeg path
+ffmpeg.setFfmpegPath(ffmpegPath);
 
 const app = express();
 
@@ -25,7 +27,9 @@ const outputDir = path.join(__dirname, "shorts");
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir);
 
-// ✅ Multer setup (file storage)
+// ============================
+// 🚀 MULTER SETUP
+// ============================
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => {
@@ -36,7 +40,7 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
   limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB max (important for Railway)
+    fileSize: 50 * 1024 * 1024,
   },
 });
 
@@ -57,18 +61,15 @@ app.post("/upload", upload.single("video"), async (req, res) => {
     }
 
     const duration = parseInt(req.body.duration) || 30;
-
     const inputPath = req.file.path;
-    const outputFiles = [];
 
     console.log("📥 File received:", inputPath);
 
-    // 🔥 PROCESS IN BACKGROUND (IMPORTANT FOR FREE TIER)
+    // ✅ background processing
     setImmediate(() => {
-      processVideo(inputPath, duration, outputFiles);
+      processVideo(inputPath, duration);
     });
 
-    // ✅ Respond immediately (prevents timeout & SIGKILL)
     return res.json({
       message: "Processing started",
       status: "processing",
@@ -81,15 +82,14 @@ app.post("/upload", upload.single("video"), async (req, res) => {
 });
 
 // ============================
-// 🚀 VIDEO PROCESSING FUNCTION
+// 🚀 VIDEO PROCESSING
 // ============================
-function processVideo(inputPath, duration, outputFiles) {
+function processVideo(inputPath, duration) {
   let index = 0;
 
   const processNext = () => {
     const outputPath = path.join(
-      __dirname,
-      "shorts",
+      outputDir,
       `short-${Date.now()}-${index}.mp4`
     );
 
@@ -99,27 +99,24 @@ function processVideo(inputPath, duration, outputFiles) {
       .setStartTime(index * duration)
       .setDuration(duration)
 
-      // ✅ LIGHTWEIGHT TRANSFORMATION (IMPORTANT)
+      // ✅ LIGHTWEIGHT + SAFE 9:16
       .videoFilters([
-        "scale=720:1280:force_original_aspect_ratio=decrease",
-        "pad=720:1280:(ow-iw)/2:(oh-ih)/2:black"
+        "scale=720:1280:force_original_aspect_ratio=increase",
+        "crop=720:1280",
       ])
 
       .videoCodec("libx264")
       .audioCodec("aac")
-
       .outputOptions([
-        "-preset ultrafast",  // ⚡ reduces CPU usage
-        "-crf 28"             // ⚡ reduces load
+        "-preset ultrafast",
+        "-crf 28"
       ])
 
       .on("end", () => {
         console.log("✅ Chunk done:", index);
 
-        outputFiles.push(`/shorts/${path.basename(outputPath)}`);
         index++;
 
-        // Stop after 3 clips (prevents overload)
         if (index < 3) {
           processNext();
         } else {
@@ -140,8 +137,8 @@ function processVideo(inputPath, duration, outputFiles) {
 // ============================
 // 🚀 STATIC FILES
 // ============================
-app.use("/shorts", express.static(path.join(__dirname, "shorts")));
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+app.use("/shorts", express.static(outputDir));
+app.use("/uploads", express.static(uploadDir));
 
 // ============================
 // 🚀 START SERVER
