@@ -1,3 +1,7 @@
+const ffmpegPath = require("ffmpeg-static");
+
+ffmpeg.setFfmpegPath(ffmpegPath);
+
 const express = require("express");
 const multer = require("multer");
 const cors = require("cors");
