@@ -34,7 +34,7 @@ export default function App() {
 
       // ✅ Use LOCAL backend (important)
       const res = await axios.post(
-        "https://video-splitter-backend-0rxx.onrender.com/upload",
+        "video-splitter-production-b811.up.railway.app",
         formData,
         {
           headers: { "Content-Type": "multipart/form-data" },
