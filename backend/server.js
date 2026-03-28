@@ -92,16 +92,13 @@ app.post('/upload', upload.single('video'), async (req, res) => {
           // 🔥 FIXED: 9:16 + BLACK PADDING
 
           .videoFilters([
-            // 1. Scale up slightly (zoom in)
-            "scale=1080:1920:force_original_aspect_ratio=increase",
-
-            // 2. Crop to maintain center focus
-            "crop=1080:1440",
-
-            // 3. Add black padding (12.5% top & bottom of 1920 = 240px each)
-            "pad=1080:1920:0:240:black",
-
-            "setsar=1"
+            "scale=720:1280"
+          ])
+          .videoCodec("libx264")
+          .audioCodec("aac")
+          .outputOptions([
+            "-preset ultrafast",
+            "-crf 28"
           ])
 
           .videoCodec('libx264')
