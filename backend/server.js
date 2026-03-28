@@ -1,151 +1,139 @@
-require("dotenv").config();
+require('dotenv').config();
 
-const express = require("express");
-const cors = require("cors");
-const multer = require("multer");
-const path = require("path");
-const fs = require("fs");
-
-const ffmpeg = require("fluent-ffmpeg");
-const ffmpegPath = require("ffmpeg-static");
-const ffprobePath = require("ffprobe-static").path;
+const ffmpegPath = require('ffmpeg-static');
+const ffprobePath = require('ffprobe-static').path;
+const ffmpeg = require('fluent-ffmpeg');
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 ffmpeg.setFfprobePath(ffprobePath);
 
+const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+
 const app = express();
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 5000;
 
-/* -----------------------------
-   🔥 MIDDLEWARE
---------------------------------*/
-app.use(cors());
-app.use(express.json());
+// 📁 Directories
+const UPLOAD_DIR = path.join(__dirname, 'uploads');
+const SHORTS_DIR = path.join(__dirname, 'shorts');
 
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR);
+if (!fs.existsSync(SHORTS_DIR)) fs.mkdirSync(SHORTS_DIR);
 
-/* -----------------------------
-   📁 CREATE UPLOADS FOLDER
---------------------------------*/
-if (!fs.existsSync("uploads")) {
-  fs.mkdirSync("uploads");
-}
-
-/* -----------------------------
-   📦 MULTER SETUP
---------------------------------*/
+// 📦 Multer setup
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, "uploads");
-  },
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + "_" + file.originalname);
-  },
+  destination: (_, __, cb) => cb(null, UPLOAD_DIR),
+  filename: (_, file, cb) => cb(null, Date.now() + '-' + file.originalname),
 });
 
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: { fileSize: 80 * 1024 * 1024 },
+});
 
-/* -----------------------------
-   🎬 FFmpeg PROCESSING (ZOOM OUT + BLACK BARS)
---------------------------------*/
-function processVideo(input, output, start, duration) {
-  return new Promise((resolve, reject) => {
-    ffmpeg(input)
-      .inputOptions("-noautorotate")
-      .setStartTime(start)
-      .setDuration(duration)
+// 🌐 CORS
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type");
+  next();
+});
 
-      .videoFilters([
-        // 🔥 Keep aspect ratio, fit inside 9:16
-        "scale=1080:1920:force_original_aspect_ratio=decrease",
+app.use(express.json());
+app.use('/shorts', express.static(SHORTS_DIR));
 
-        // 🔥 Add black bars
-        "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black",
+// 🏠 Health route
+app.get('/', (_, res) => {
+  res.send('🎬 Video Splitter Backend Running');
+});
 
-        // 🔥 Fix aspect ratio issues
-        "setsar=1"
-      ])
-
-      .videoCodec("libx264")
-      .audioCodec("aac")
-
-      .outputOptions([
-        "-preset",
-        "fast",
-        "-crf",
-        "23",
-        "-movflags",
-        "+faststart"
-      ])
-
-      .on("start", (cmd) => {
-        console.log("FFmpeg CMD:", cmd);
-      })
-
-      .on("end", () => {
-        console.log("Processing done:", output);
-        resolve();
-      })
-
-      .on("error", (err) => {
-        console.error("FFmpeg error:", err);
-        reject(err);
-      })
-
-      .save(output);
-  });
-}
-
-/* -----------------------------
-   🚀 UPLOAD + PROCESS ROUTE
---------------------------------*/
-app.post("/upload", upload.single("video"), async (req, res) => {
+// 🎬 Upload & Split (WITH 9:16 + BLACK PADDING)
+app.post('/upload', upload.single('video'), async (req, res) => {
   try {
-    const filePath = req.file.path;
-    const duration = parseInt(req.body.duration) || 45;
-
-    const outputs = [];
-    const tasks = [];
-
-    // 🔥 Generate 3 clips
-    for (let i = 0; i < 3; i++) {
-      const outputPath = `uploads/output_${Date.now()}_${i}.mp4`;
-
-      tasks.push(
-        processVideo(filePath, outputPath, i * duration, duration)
-      );
-
-      outputs.push(outputPath);
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    await Promise.all(tasks);
+    const inputPath = req.file.path;
 
-    // 🔥 Generate URLs
-    const urls = outputs.map(
-      (file) =>
-        `${req.protocol}://${req.get("host")}/uploads/${path.basename(file)}`
-    );
+    let chunkSec = parseInt(req.body.duration, 10);
+    if (isNaN(chunkSec) || chunkSec <= 0 || chunkSec > 60) {
+      chunkSec = 45;
+    }
 
-    // 🔥 Delete original file
-    fs.unlinkSync(filePath);
+    ffmpeg.ffprobe(inputPath, (err, metadata) => {
+      if (err) {
+        return res.status(500).json({ error: 'Metadata error' });
+      }
 
-    res.json({ shorts: urls });
-  } catch (error) {
-    console.error("Upload Error:", error);
-    res.status(500).json({ error: "Processing failed" });
+      const totalSec = metadata.format.duration;
+      const count = Math.ceil(totalSec / chunkSec);
+
+      const urls = [];
+      let i = 0;
+
+      const processNext = () => {
+        if (i >= count) {
+          // 🧹 delete original upload
+          fs.unlink(inputPath, () => {});
+          return res.json({ shorts: urls });
+        }
+
+        const start = i * chunkSec;
+        const fileName = `short-${Date.now()}-${i}.mp4`;
+        const outputPath = path.join(SHORTS_DIR, fileName);
+
+        ffmpeg(inputPath)
+          .setStartTime(start)
+          .setDuration(chunkSec)
+
+          // 🔥 IMPORTANT: 9:16 + BLACK PADDING
+          .videoFilters([
+            "scale=1080:1920:force_original_aspect_ratio=decrease",
+            "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black",
+            "setsar=1"
+          ])
+
+          .videoCodec('libx264')
+          .audioCodec('aac')
+          .outputOptions(['-preset', 'fast', '-crf', '23'])
+
+          .output(outputPath)
+          .on('end', () => {
+            const url = `${req.protocol}://${req.get('host')}/shorts/${fileName}`;
+            urls.push(url);
+
+            console.log(`✅ Created: ${fileName}`);
+
+            // 🧹 Auto delete after 5 minutes
+            setTimeout(() => {
+              fs.unlink(outputPath, () => {
+                console.log(`🧹 Deleted: ${fileName}`);
+              });
+            }, 5 * 60 * 1000);
+
+            i++;
+            processNext();
+          })
+          .on('error', (err) => {
+            console.error('❌ FFmpeg error:', err);
+            return res.status(500).json({ error: 'Processing failed' });
+          })
+          .run();
+      };
+
+      processNext();
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
-/* -----------------------------
-   🟢 HEALTH CHECK
---------------------------------*/
-app.get("/", (req, res) => {
-  res.send("🚀 Backend running successfully");
-});
-
-/* -----------------------------
-   🚀 START SERVER
---------------------------------*/
+// 🚀 Start server
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
